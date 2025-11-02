@@ -22,7 +22,7 @@ settings:
     version: 'detect'
 rules:
   linebreak-style:
-    - error
+    - none
     - unix
   'prettier/prettier':
     - error

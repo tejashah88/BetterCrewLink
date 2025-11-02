@@ -798,6 +798,46 @@ const Settings: React.FC<SettingsProps> = function ({ t, open, onClose }: Settin
 					</Grid>
 				</div>
 				<Divider />
+				{/* TODO: Add localization */}
+				<Typography variant="h6">
+					{'Player Volume Tweaks'}
+				</Typography>
+				<div>
+					<Typography id="input-slider" gutterBottom>
+						{/* TODO: Add localization */}
+						{'Loud Voice Limit [dB]'}
+					</Typography>
+					<Grid container spacing={2}>
+						<Grid item xs={3}>
+							<Checkbox
+								checked={settings.normalizeVoiceVolumesEnabled}
+								onChange={(_, checked: boolean) => setSettings('normalizeVoiceVolumesEnabled', checked)}
+							/>
+						</Grid>
+						<Grid
+							item
+							xs={8}
+							style={{
+								display: 'flex',
+								justifyContent: 'center',
+								alignItems: 'center',
+							}}
+						>
+							<Slider
+								size="small"
+								disabled={!settings.normalizeVoiceVolumesEnabled}
+								value={settings.loudnessDbThreshold}
+								valueLabelDisplay="auto"
+								min={-60}
+								max={0}
+								step={1}
+								onChange={(_, newValue: number | number[]) => setSettings('loudnessDbThreshold', newValue as number)}
+								aria-labelledby="input-slider"
+							/>
+						</Grid>
+					</Grid>
+				</div>
+				<Divider />
 				<Typography variant="h6">{t('settings.keyboard.title')}</Typography>
 				<Grid container spacing={1}>
 					<Grid item xs={6}>

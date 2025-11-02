@@ -223,7 +223,8 @@ if (!gotTheLock) {
 	app.quit();
 } else {
 	autoUpdater.autoDownload = false;
-	autoUpdater.checkForUpdates();
+	// NOTE: Disable checking for updates to ensure users don't auto-update by accident
+	// autoUpdater.checkForUpdates();
 	autoUpdater.on('update-available', (info: UpdateInfo) => {
 		try {
 			global.mainWindow?.webContents.send(IpcRendererMessages.AUTO_UPDATER_STATE, {

@@ -184,6 +184,14 @@ export const SettingsStore = new Store<ISettings>({
 			type: 'boolean',
 			default: false,
 		},
+		normalizeVoiceVolumesEnabled: {
+			type: 'boolean',
+			default: false,
+		},
+		loudnessDbThreshold: {
+			type: 'number',
+			default: -32,
+		},
 		natFix: {
 			type: 'boolean',
 			default: false,
