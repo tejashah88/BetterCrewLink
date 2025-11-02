@@ -62,6 +62,8 @@ interface VadNode {
 interface AudioNodes {
 	dummyAudioElement: HTMLAudioElement;
 	audioElement: HTMLAudioElement;
+	dynamicsCompressor: DynamicsCompressorNode;
+	compressorAnalyzer: AnalyserNode;
 	gain: GainNode;
 	pan: PannerNode;
 	reverb: ConvolverNode;
@@ -69,6 +71,7 @@ interface AudioNodes {
 	destination: AudioNode;
 	reverbConnected: boolean;
 	muffleConnected: boolean;
+	volumeNormApplied: boolean;
 }
 
 interface AudioElements {
@@ -274,6 +277,25 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 		}
 	}
 
+	// NOTE: This only applies the dynamics compressor; The hard limit gain is applied after gain calculations
+	function applyNormalizationEffects(
+		gain: AudioNode,
+		dynamicsCompressor: AudioNode,
+		compressorAnalyzer: AudioNode,
+		destination: AudioNode,
+		player: Player
+	) {
+		console.log('Apply effect->', dynamicsCompressor, compressorAnalyzer);
+		try {
+			gain.disconnect(destination);
+			gain.connect(dynamicsCompressor);
+			dynamicsCompressor.connect(compressorAnalyzer);
+			compressorAnalyzer.connect(destination);
+		} catch {
+			console.log('error with applying effect: ', player.name, dynamicsCompressor, compressorAnalyzer);
+		}
+	}
+
 	function restoreEffect(gain: AudioNode, effectNode: AudioNode, destination: AudioNode, player: Player) {
 		console.log('restore effect->', effectNode);
 		try {
@@ -284,6 +306,25 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 			console.log('error with applying effect: ', player.name, effectNode);
 		}
 	}
+
+	function restoreNormalizationEffects(
+		gain: AudioNode,
+		dynamicsCompressor: AudioNode,
+		compressorAnalyzer: AudioNode,
+		destination: AudioNode,
+		player: Player
+	) {
+		console.log('restore effect->', dynamicsCompressor, compressorAnalyzer);
+		try {
+			compressorAnalyzer.disconnect(destination);
+			dynamicsCompressor.disconnect(compressorAnalyzer);
+			gain.disconnect(dynamicsCompressor);
+			gain.connect(destination);
+		} catch {
+			console.log('error with applying effect: ', player.name, dynamicsCompressor, compressorAnalyzer);
+		}
+	}
+
 	function calculateVoiceAudio(
 		state: AmongUsState,
 		settings: ISettings,
@@ -499,6 +540,8 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 			audioElements.current[peer].gain.disconnect();
 			// if (audioElements.current[peer].reverbGain != null) audioElements.current[peer].reverbGain?.disconnect();
 			if (audioElements.current[peer].reverb != null) audioElements.current[peer].reverb?.disconnect();
+			if (audioElements.current[peer].dynamicsCompressor != null) audioElements.current[peer].dynamicsCompressor?.disconnect();
+			if (audioElements.current[peer].compressorAnalyzer != null) audioElements.current[peer].compressorAnalyzer?.disconnect();
 			delete audioElements.current[peer];
 		}
 	}
@@ -1020,6 +1063,24 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 					const muffle = context.createBiquadFilter();
 					muffle.type = 'lowpass';
 
+					const COMPRESSOR_KNEE = 0;        // Hard knee for hard transition to clamping behaviour
+					const COMPRESSOR_RATIO = 20;      // Very high ratio for aggressive limiting (20:1)
+					const COMPRESSOR_ATTACK = 0.003;  // 3ms - fast but not instant (prevents clicks)
+					const COMPRESSOR_RELEASE = 0.1;   // 100ms - smooth release for natural sound
+
+					const dynamicsCompressor = new DynamicsCompressorNode(context, {
+						threshold: settings.loudnessDbThreshold,
+						knee: COMPRESSOR_KNEE,
+						ratio: COMPRESSOR_RATIO,
+						attack: COMPRESSOR_ATTACK,
+						release: COMPRESSOR_RELEASE,
+					});
+
+					const compressorAnalyzer = new AnalyserNode(context, {
+						fftSize: 2048,
+						smoothingTimeConstant: 0.3,
+					});
+
 					source.connect(pan);
 					pan.connect(gain);
 
@@ -1050,8 +1111,13 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 						pan,
 						reverb,
 						muffle,
+						dynamicsCompressor,
+						compressorAnalyzer,
 						muffleConnected: false,
 						reverbConnected: false,
+						// NOTE: This needs to be set to false if the client settings
+						// is set to true in order to apply the effects on first connection
+						volumeNormApplied: false,
 						destination,
 					};
 				});
@@ -1212,7 +1278,45 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 					gain = 0;
 				}
 
+				// HACK: Not necessary to set it on every frame but cheaper than useEffect (and prevents rebuild)
+				if (settings.normalizeVoiceVolumesEnabled) {
+					audio.dynamicsCompressor.threshold.value = settings.loudnessDbThreshold;
+				}
+
+				// Only apply normalization effects if client settings don't match peer settings
+				if (settings.normalizeVoiceVolumesEnabled && !audio.volumeNormApplied) {
+					audio.volumeNormApplied = true;
+					applyNormalizationEffects(audio.gain, audio.dynamicsCompressor, audio.compressorAnalyzer, audio.destination, player)
+				} else if (!settings.normalizeVoiceVolumesEnabled && audio.volumeNormApplied) {
+					audio.volumeNormApplied = false;
+					restoreNormalizationEffects(audio.gain, audio.dynamicsCompressor, audio.compressorAnalyzer, audio.destination, player);
+				}
+
 				if (gain > 0) {
+					// Apply a hard clamp after the dynamics compressor node
+					// This is to be applied before the master volume
+					if (settings.normalizeVoiceVolumesEnabled) {
+						const compressorData = new Float32Array(audio.compressorAnalyzer.fftSize);
+						audio.compressorAnalyzer.getFloatTimeDomainData(compressorData);
+
+						// Calculate the average loudness via root mean square (RMS)
+						let sumSquares = 0;
+						for (let i = 0; i < compressorData.length; i++) {
+							sumSquares += compressorData[i] * compressorData[i];
+						}
+						const compressorRMS = Math.sqrt(sumSquares / compressorData.length);
+
+						// Convert to decibels (dB)
+						const compressorDb = 20 * Math.log10(compressorRMS || 1e-5);
+
+						if (compressorDb > settings.loudnessDbThreshold) {
+							const gainDb = settings.loudnessDbThreshold - compressorDb;
+							// Convert needed gain in decibels to an absolute factor (10^(G/20))
+							const targetGain = Math.pow(10, gainDb / 20);
+							gain = gain * targetGain;
+						}
+					}
+
 					const playerVolume = playerConfigs[player.nameHash]?.volume;
 					gain = playerVolume === undefined ? gain : gain * playerVolume;
 
