@@ -73,7 +73,8 @@ interface AudioNodes {
 		mixerGain: GainNode,
 	},
 	dynamicsCompressor: DynamicsCompressorNode;
-	compressorAnalyzer: AnalyserNode;
+	limiterCompressor: DynamicsCompressorNode;
+	mixerAnalyser: AnalyserNode;
 	gain: GainNode;
 	pan: PannerNode;
 	reverb: ConvolverNode;
@@ -321,11 +322,12 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 			audio.filters.highBandFilter.connect(audio.filters.highBandGain);
 			audio.filters.highBandGain.connect(audio.filters.mixerGain);
 
-			// BAND MIXING & ANALYSIS: All three bands are mixed, then analyzed
-			// The analyser measures the COMBINED output of all three bands
-			// This ensures the hard limiter responds to the true signal level
-			audio.filters.mixerGain.connect(audio.compressorAnalyzer);
-			audio.compressorAnalyzer.connect(destination);
+			// FINAL STAGE: Two-stage limiting for smooth + accurate ceiling
+			// Stage 1: DynamicsCompressor (20:1 ratio) provides smooth limiting at audio rate
+			// Stage 2: GainNode safety limiter provides true hard ceiling
+			audio.filters.mixerGain.connect(audio.limiterCompressor);
+			audio.limiterCompressor.connect(audio.mixerAnalyser);
+			audio.mixerAnalyser.connect(destination);
 		} catch {
 			console.log('error with applying voice normalization effect: ', player.name);
 		}
@@ -350,31 +352,30 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 	) {
 		console.log('Reverse voice normalization effect');
 		try {
-			// BAND MIXING & ANALYSIS: All three bands are mixed, then analyzed
-			// The analyser measures the COMBINED output of all three bands
-			// This ensures the hard limiter responds to the true signal level
-			destination.disconnect(audio.compressorAnalyzer);
-			audio.compressorAnalyzer.disconnect(audio.filters.mixerGain);
+			// FINAL STAGE: Two-stage limiting for smooth + accurate ceiling
+			audio.mixerAnalyser.disconnect(destination);
+			audio.limiterCompressor.disconnect(audio.mixerAnalyser);
+			audio.filters.mixerGain.disconnect(audio.limiterCompressor);
 
-			// LOW BAND (< 300Hz): Bypass compression, pass through unmodified
-			// Rumble and low-frequency noise - no makeup gain amplification
-			audio.filters.mixerGain.disconnect(audio.filters.lowBandGain);
-			audio.filters.lowBandGain.disconnect(audio.filters.lowBandFilter);
-			audio.filters.lowBandFilter.disconnect(gain);
+			// Split source into 3 parallel frequency bands
+
+			// HIGH BAND (> 3000Hz): Bypass compression, pass through unmodified
+			audio.filters.highBandGain.disconnect(audio.filters.mixerGain);
+			audio.filters.highBandFilter.disconnect(audio.filters.highBandGain);
+			gain.disconnect(audio.filters.highBandFilter);
 
 			// MID BAND (300-3000Hz): Full compression for voice normalization
 			// Primary voice frequencies - this is where we want aggressive compression
-			audio.filters.mixerGain.disconnect(audio.filters.midBandGain);
-			audio.filters.midBandGain.disconnect(audio.dynamicsCompressor);
-			audio.dynamicsCompressor.disconnect(audio.filters.midBandFilterLP);
-			audio.filters.midBandFilterLP.disconnect(audio.filters.midBandFilterHP);
-			audio.filters.midBandFilterHP.disconnect(gain);
+			audio.filters.midBandGain.disconnect(audio.filters.mixerGain);
+			audio.dynamicsCompressor.disconnect(audio.filters.midBandGain);
+			audio.filters.midBandFilterLP.disconnect(audio.dynamicsCompressor);
+			audio.filters.midBandFilterHP.disconnect(audio.filters.midBandFilterLP);
+			gain.disconnect(audio.filters.midBandFilterHP);
 
-			// HIGH BAND (> 3000Hz): Bypass compression, pass through unmodified
-			// Sibilance and high-frequency noise - no makeup gain amplification
-			audio.filters.mixerGain.disconnect(audio.filters.highBandGain);
-			audio.filters.highBandGain.disconnect(audio.filters.highBandFilter);
-			audio.filters.highBandFilter.disconnect(gain);
+			// LOW BAND (< 300Hz): Bypass compression, pass through unmodified
+			audio.filters.lowBandGain.disconnect(audio.filters.mixerGain);
+			audio.filters.lowBandFilter.disconnect(audio.filters.lowBandGain);
+			gain.disconnect(audio.filters.lowBandFilter);
 
 			// Re-connect with original destination
 			gain.connect(destination);
@@ -610,7 +611,8 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 
 			// Dynamics Compressor
 			if (audioElements.current[peer].dynamicsCompressor != null) audioElements.current[peer].dynamicsCompressor?.disconnect();
-			if (audioElements.current[peer].compressorAnalyzer != null) audioElements.current[peer].compressorAnalyzer?.disconnect();
+			if (audioElements.current[peer].limiterCompressor != null) audioElements.current[peer].limiterCompressor?.disconnect();
+			if (audioElements.current[peer].mixerAnalyser != null) audioElements.current[peer].mixerAnalyser?.disconnect();
 			delete audioElements.current[peer];
 		}
 	}
@@ -1198,7 +1200,20 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 						release: COMPRESSOR_RELEASE,
 					});
 
-					const compressorAnalyzer = new AnalyserNode(context, {
+					const LIMITER_ATTACK     = 0.003;  // 3ms - fast response to prevent clipping
+					const LIMITER_RELEASE    = 0.05;   // 50ms - smooth release for natural sound
+
+					// Create first-stage limiter (compressor for smooth limiting)
+					const limiterCompressor = new DynamicsCompressorNode(context, {
+						threshold: settings.loudnessDbThreshold,    // -20 dB ceiling
+						knee: 0,                      // Hard knee (brick-wall limiting)
+						ratio: 20,                    // Very high ratio (20:1) for aggressive limiting
+						attack: LIMITER_ATTACK,       // 3ms - fast response to catch peaks
+						release: LIMITER_RELEASE,     // 50ms - smooth release (slower than mid-band compressor)
+					});
+
+					// Create analyser to measure signal after first-stage limiter
+					const mixerAnalyser = new AnalyserNode(context, {
 						fftSize: 2048,
 						smoothingTimeConstant: 0.3,
 					});
@@ -1240,7 +1255,8 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 							mixerGain,
 						},
 						dynamicsCompressor,
-						compressorAnalyzer,
+						limiterCompressor,
+						mixerAnalyser,
 						gain,
 						pan,
 						reverb,
@@ -1428,21 +1444,20 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 					// Apply a hard clamp after the dynamics compressor node
 					// This is to be applied before the master volume
 					if (settings.normalizeVoiceVolumesEnabled) {
-						const compressorData = new Float32Array(audio.compressorAnalyzer.fftSize);
-						audio.compressorAnalyzer.getFloatTimeDomainData(compressorData);
+						const analyserData = new Float32Array(audio.mixerAnalyser.fftSize);
+						audio.mixerAnalyser.getFloatTimeDomainData(analyserData);
 
 						// Calculate the average loudness via root mean square (RMS)
 						let sumSquares = 0;
-						for (let i = 0; i < compressorData.length; i++) {
-							sumSquares += compressorData[i] * compressorData[i];
+						for (let i = 0; i < analyserData.length; i++) {
+							sumSquares += analyserData[i] * analyserData[i];
 						}
-						const compressorRMS = Math.sqrt(sumSquares / compressorData.length);
 
-						// Convert to decibels (dB)
-						const compressorDb = 20 * Math.log10(compressorRMS || 1e-5);
+						const rmsSignal = Math.sqrt(sumSquares / analyserData.length);
+						const measuredDb = 20 * Math.log10(rmsSignal || 1e-5);
 
-						if (compressorDb > settings.loudnessDbThreshold) {
-							const gainDb = settings.loudnessDbThreshold - compressorDb;
+						if (measuredDb > settings.loudnessDbThreshold) {
+							const gainDb = settings.loudnessDbThreshold - measuredDb;
 							// Convert needed gain in decibels to an absolute factor (10^(G/20))
 							const targetGain = Math.pow(10, gainDb / 20);
 							gain = gain * targetGain;
