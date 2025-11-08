@@ -62,6 +62,16 @@ interface VadNode {
 interface AudioNodes {
 	dummyAudioElement: HTMLAudioElement;
 	audioElement: HTMLAudioElement;
+	filters: {
+		lowBandFilter: BiquadFilterNode,
+		midBandFilterHP: BiquadFilterNode,
+		midBandFilterLP: BiquadFilterNode,
+		highBandFilter: BiquadFilterNode,
+		lowBandGain: GainNode,
+		midBandGain: GainNode,
+		highBandGain: GainNode,
+		mixerGain: GainNode,
+	},
 	dynamicsCompressor: DynamicsCompressorNode;
 	compressorAnalyzer: AnalyserNode;
 	gain: GainNode;
@@ -280,19 +290,44 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 	// NOTE: This only applies the dynamics compressor; The hard limit gain is applied after gain calculations
 	function applyNormalizationEffects(
 		gain: AudioNode,
-		dynamicsCompressor: AudioNode,
-		compressorAnalyzer: AudioNode,
+		audio: AudioNodes,
 		destination: AudioNode,
 		player: Player
 	) {
-		console.log('Apply effect->', dynamicsCompressor, compressorAnalyzer);
+		console.log('Apply voice normalization effect');
 		try {
+			// Disconnect current destination
 			gain.disconnect(destination);
-			gain.connect(dynamicsCompressor);
-			dynamicsCompressor.connect(compressorAnalyzer);
-			compressorAnalyzer.connect(destination);
+
+			// Split source into 3 parallel frequency bands
+
+			// LOW BAND (< 300Hz): Bypass compression, pass through unmodified
+			// Rumble and low-frequency noise - no makeup gain amplification
+			gain.connect(audio.filters.lowBandFilter);
+			audio.filters.lowBandFilter.connect(audio.filters.lowBandGain);
+			audio.filters.lowBandGain.connect(audio.filters.mixerGain);
+
+			// MID BAND (300-3000Hz): Full compression for voice normalization
+			// Primary voice frequencies - this is where we want aggressive compression
+			gain.connect(audio.filters.midBandFilterHP);
+			audio.filters.midBandFilterHP.connect(audio.filters.midBandFilterLP);
+			audio.filters.midBandFilterLP.connect(audio.dynamicsCompressor);
+			audio.dynamicsCompressor.connect(audio.filters.midBandGain);
+			audio.filters.midBandGain.connect(audio.filters.mixerGain);
+
+			// HIGH BAND (> 3000Hz): Bypass compression, pass through unmodified
+			// Sibilance and high-frequency noise - no makeup gain amplification
+			gain.connect(audio.filters.highBandFilter);
+			audio.filters.highBandFilter.connect(audio.filters.highBandGain);
+			audio.filters.highBandGain.connect(audio.filters.mixerGain);
+
+			// BAND MIXING & ANALYSIS: All three bands are mixed, then analyzed
+			// The analyser measures the COMBINED output of all three bands
+			// This ensures the hard limiter responds to the true signal level
+			audio.filters.mixerGain.connect(audio.compressorAnalyzer);
+			audio.compressorAnalyzer.connect(destination);
 		} catch {
-			console.log('error with applying effect: ', player.name, dynamicsCompressor, compressorAnalyzer);
+			console.log('error with applying voice normalization effect: ', player.name);
 		}
 	}
 
@@ -309,19 +344,42 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 
 	function restoreNormalizationEffects(
 		gain: AudioNode,
-		dynamicsCompressor: AudioNode,
-		compressorAnalyzer: AudioNode,
+		audio: AudioNodes,
 		destination: AudioNode,
 		player: Player
 	) {
-		console.log('restore effect->', dynamicsCompressor, compressorAnalyzer);
+		console.log('Reverse voice normalization effect');
 		try {
-			compressorAnalyzer.disconnect(destination);
-			dynamicsCompressor.disconnect(compressorAnalyzer);
-			gain.disconnect(dynamicsCompressor);
+			// BAND MIXING & ANALYSIS: All three bands are mixed, then analyzed
+			// The analyser measures the COMBINED output of all three bands
+			// This ensures the hard limiter responds to the true signal level
+			destination.disconnect(audio.compressorAnalyzer);
+			audio.compressorAnalyzer.disconnect(audio.filters.mixerGain);
+
+			// LOW BAND (< 300Hz): Bypass compression, pass through unmodified
+			// Rumble and low-frequency noise - no makeup gain amplification
+			audio.filters.mixerGain.disconnect(audio.filters.lowBandGain);
+			audio.filters.lowBandGain.disconnect(audio.filters.lowBandFilter);
+			audio.filters.lowBandFilter.disconnect(gain);
+
+			// MID BAND (300-3000Hz): Full compression for voice normalization
+			// Primary voice frequencies - this is where we want aggressive compression
+			audio.filters.mixerGain.disconnect(audio.filters.midBandGain);
+			audio.filters.midBandGain.disconnect(audio.dynamicsCompressor);
+			audio.dynamicsCompressor.disconnect(audio.filters.midBandFilterLP);
+			audio.filters.midBandFilterLP.disconnect(audio.filters.midBandFilterHP);
+			audio.filters.midBandFilterHP.disconnect(gain);
+
+			// HIGH BAND (> 3000Hz): Bypass compression, pass through unmodified
+			// Sibilance and high-frequency noise - no makeup gain amplification
+			audio.filters.mixerGain.disconnect(audio.filters.highBandGain);
+			audio.filters.highBandGain.disconnect(audio.filters.highBandFilter);
+			audio.filters.highBandFilter.disconnect(gain);
+
+			// Re-connect with original destination
 			gain.connect(destination);
 		} catch {
-			console.log('error with applying effect: ', player.name, dynamicsCompressor, compressorAnalyzer);
+			console.log('error with reversing voice normalization effect: ', player.name);
 		}
 	}
 
@@ -540,6 +598,17 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 			audioElements.current[peer].gain.disconnect();
 			// if (audioElements.current[peer].reverbGain != null) audioElements.current[peer].reverbGain?.disconnect();
 			if (audioElements.current[peer].reverb != null) audioElements.current[peer].reverb?.disconnect();
+
+			// Noise filters
+			if (audioElements.current[peer].filters.lowBandFilter != null) audioElements.current[peer].filters.lowBandFilter?.disconnect();
+			if (audioElements.current[peer].filters.midBandFilterHP != null) audioElements.current[peer].filters.midBandFilterHP?.disconnect();
+			if (audioElements.current[peer].filters.midBandFilterLP != null) audioElements.current[peer].filters.midBandFilterLP?.disconnect();
+			if (audioElements.current[peer].filters.highBandFilter != null) audioElements.current[peer].filters.highBandFilter?.disconnect();
+			if (audioElements.current[peer].filters.lowBandGain != null) audioElements.current[peer].filters.lowBandGain?.disconnect();
+			if (audioElements.current[peer].filters.midBandGain != null) audioElements.current[peer].filters.midBandGain?.disconnect();
+			if (audioElements.current[peer].filters.highBandGain != null) audioElements.current[peer].filters.highBandGain?.disconnect();
+
+			// Dynamics Compressor
 			if (audioElements.current[peer].dynamicsCompressor != null) audioElements.current[peer].dynamicsCompressor?.disconnect();
 			if (audioElements.current[peer].compressorAnalyzer != null) audioElements.current[peer].compressorAnalyzer?.disconnect();
 			delete audioElements.current[peer];
@@ -1063,6 +1132,59 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 					const muffle = context.createBiquadFilter();
 					muffle.type = 'lowpass';
 
+					// Multi-band crossover frequencies (Hz)
+					const CROSSOVER_LOW  = 300;   // Below this: low band (rumble, low-frequency noise)
+					const CROSSOVER_HIGH = 3000;  // Above this: high band (hiss, high-frequency noise)
+												// Between: mid band (300-3000Hz) - primary voice frequencies
+
+					// Create frequency band filters
+					// Low band: frequencies below 300Hz (rumble, low-frequency noise)
+					const lowBandFilter = new BiquadFilterNode(context, {
+						type: 'lowpass',
+						frequency: CROSSOVER_LOW,
+						Q: 0.7071,  // Butterworth response (Q = 1/√2): maximally flat passband, no resonance peak
+									// Default Q = 1 would create slight resonance at cutoff; 0.7071 is standard for crossovers
+					});
+
+					// Mid band: frequencies 300-3000Hz (primary voice range)
+					// Requires two filters in series to create bandpass
+					const midBandFilterHP = new BiquadFilterNode(context, {
+						type: 'highpass',
+						frequency: CROSSOVER_LOW,
+						Q: 0.7071,
+					});
+
+					const midBandFilterLP = new BiquadFilterNode(context, {
+						type: 'lowpass',
+						frequency: CROSSOVER_HIGH,
+						Q: 0.7071,
+					});
+
+					// High band: frequencies above 3000Hz (sibilance, high-frequency noise)
+					const highBandFilter = new BiquadFilterNode(context, {
+						type: 'highpass',
+						frequency: CROSSOVER_HIGH,
+						Q: 0.7071,
+					});
+
+					// Create gain nodes for each band (for mixing and potential level adjustment)
+					const lowBandGain = new GainNode(context, {
+						gain: 1.0, // Unity gain - pass through unmodified
+					});
+
+					const midBandGain = new GainNode(context, {
+						gain: 1.0, // Unity gain
+					});
+
+					const highBandGain = new GainNode(context, {
+						gain: 1.0, // Unity gain - pass through unmodified
+					});
+
+					// Create mixer gain node (combines all three bands before analysis)
+					const mixerGain = new GainNode(context, {
+						gain: 1.0, // Unity gain - just for routing/mixing
+					});
+
 					const COMPRESSOR_KNEE = 0;        // Hard knee for hard transition to clamping behaviour
 					const COMPRESSOR_RATIO = 20;      // Very high ratio for aggressive limiting (20:1)
 					const COMPRESSOR_ATTACK = 0.003;  // 3ms - fast but not instant (prevents clicks)
@@ -1107,12 +1229,22 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 					audioElements.current[peer] = {
 						dummyAudioElement: dummyAudio,
 						audioElement: audio,
+						filters: {
+							lowBandFilter,
+							midBandFilterHP,
+							midBandFilterLP,
+							highBandFilter,
+							lowBandGain,
+							midBandGain,
+							highBandGain,
+							mixerGain,
+						},
+						dynamicsCompressor,
+						compressorAnalyzer,
 						gain,
 						pan,
 						reverb,
 						muffle,
-						dynamicsCompressor,
-						compressorAnalyzer,
 						muffleConnected: false,
 						reverbConnected: false,
 						// NOTE: This needs to be set to false if the client settings
@@ -1286,10 +1418,10 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 				// Only apply normalization effects if client settings don't match peer settings
 				if (settings.normalizeVoiceVolumesEnabled && !audio.volumeNormApplied) {
 					audio.volumeNormApplied = true;
-					applyNormalizationEffects(audio.gain, audio.dynamicsCompressor, audio.compressorAnalyzer, audio.destination, player)
+					applyNormalizationEffects(audio.gain, audio, audio.destination, player)
 				} else if (!settings.normalizeVoiceVolumesEnabled && audio.volumeNormApplied) {
 					audio.volumeNormApplied = false;
-					restoreNormalizationEffects(audio.gain, audio.dynamicsCompressor, audio.compressorAnalyzer, audio.destination, player);
+					restoreNormalizationEffects(audio.gain, audio, audio.destination, player);
 				}
 
 				if (gain > 0) {

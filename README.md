@@ -2,7 +2,7 @@
 
 ## :arrow_down_small: Download Link :arrow_down_small:
 
-Installer Link: https://github.com/tejashah88/BetterCrewLink/releases/download/v3.1.4-E/Better-CrewLink.Setup.3.1.4-E_20251102.exe
+Installer Link: https://github.com/tejashah88/BetterCrewLink/releases/download/v3.1.4-E/Better-CrewLink.Setup.3.1.4-E_20251108.exe
 
 ## Introduction
 
@@ -30,7 +30,25 @@ To use it, go to Settings (the :gear: icon on top-left), scroll down to "Player 
 
 ## How does it work
 
-The gist is that it uses a combination of the DynamicsCompressor as well as hard limiter gain calculations to ensure the incoming volume never exceeds a decibel amount. See this repository for more information: https://github.com/tejashah88/voice-chat-volume-norm
+### Stage 1: Dynamics Compression
+Stage 1 is to split the frequencies between low, mid, and high band. Isolating the voice from the noise is necessary since some make-up gain will be applied from the dynamics compressor. The low and high frequency noise is passed through as-is while the mid-band frequency has the dynamics compressor applied. An analyzer is also attached to it to calculate the incoming absolute volume necessary for stage 2.
+
+### Stage 2: Hard Limitter Gain
+The incoming absolute volume from stage 1 is used to apply a hard limit gain to ensure the incoming volume never exceeds a decibel amount.
+
+See this repository for more information: https://github.com/tejashah88/voice-chat-volume-norm
+
+### Processing Overview
+1. Split voice signal into 3 bands:
+    - Low-band frequency: \[0, 300 Hz\]
+    - Mid-band frequency: \[300 Hz, 3,000 Hz\]
+    - High-band frequency: \[3000 Hz, inf\)
+2. Let low and high band frequency pass through to avoid amplifying noise via DynamicsCompressor's makeup gain
+3. Apply dynamics compressor against mid-band frequency, then add compressor analyzer to determine absolute volume for hard limiter gain
+4. Feed each band through gain boosting (currently all set to 1.0)
+5. Calculate absolute RMS volume for mid-band channel
+6. Set hard limit gain such that the output volume does not exceed the defined
+
 
 ## Developer Notes
 To work on this project, you'll need the latest version of Node 16, since Electron depends on it. I recommend either using nvm (node version manager) or using Docker or a VM setup (what I did).
@@ -44,3 +62,4 @@ yarn install
 yarn run dist
 yarn run dist:linux
 ```
+
