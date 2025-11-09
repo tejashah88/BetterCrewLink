@@ -2,7 +2,7 @@
 
 ## :arrow_down_small: Download Link :arrow_down_small:
 
-Installer Link: https://github.com/tejashah88/BetterCrewLink/releases/download/v3.1.4-E/Better-CrewLink.Setup.3.1.4-E_20251108.exe
+Installer Link: https://github.com/tejashah88/BetterCrewLink/releases/download/v3.1.4-E/Better-CrewLink.Setup.3.1.4-E_20251109.exe
 
 ## Introduction
 
@@ -44,3 +44,4 @@ yarn install
 yarn run dist
 yarn run dist:linux
 ```
+
