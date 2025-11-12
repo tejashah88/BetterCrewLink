@@ -1442,12 +1442,8 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 			}
 			if (audio) {
 				handledPeerIds.push(peerId);
-				let gain = calculateVoiceAudio(gameState, settingsRef.current, myPlayer, player, audio);
-				if (connectionStuff.current.deafened || playerConfigs[player.nameHash]?.isMuted) {
-					gain = 0;
-				}
 
-				// NOTE: Not necessary to set settings on every frame but cheaper than useEffect (and prevents UI rebuild)
+				// NOTE: Not necessary to set settings on every update but cheaper than useEffect
 				if (settings.normalizeVoiceVolumesEnabled) {
 					audio.volumeLimiter.port.postMessage({
 						type: 'updateParameters',
@@ -1457,7 +1453,7 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 					});
 				}
 
-				// Only apply normalization effects if client settings don't match peer settings
+				// Only apply volume thresholding accordingly if client settings don't match peer settings
 				if (settings.normalizeVoiceVolumesEnabled && !audio.volumeNormApplied) {
 					audio.volumeNormApplied = true;
 					applyEffect(audio.gain, audio.volumeLimiter, audio.destination, player);
@@ -1466,6 +1462,13 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 					restoreEffect(audio.gain, audio.volumeLimiter, audio.destination, player);
 				}
 
+				// Apply gain reduction from game state
+				let gain = calculateVoiceAudio(gameState, settingsRef.current, myPlayer, player, audio);
+				if (connectionStuff.current.deafened || playerConfigs[player.nameHash]?.isMuted) {
+					gain = 0;
+				}
+
+				// Apply further gain reduction from client settings
 				if (gain > 0) {
 					const playerVolume = playerConfigs[player.nameHash]?.volume;
 					gain = playerVolume === undefined ? gain : gain * playerVolume;
