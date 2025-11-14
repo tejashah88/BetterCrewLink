@@ -796,22 +796,16 @@ const Settings: React.FC<SettingsProps> = function ({ t, open, onClose }: Settin
 							/>
 						</Grid>
 					</Grid>
-				</div>
-				<Divider />
-				{/* TODO: Add localization */}
-				<Typography variant="h6">
-					{'Player Volume Tweaks'}
-				</Typography>
-				<div>
+
 					<Typography id="input-slider" gutterBottom>
 						{/* TODO: Add localization */}
-						{'Loud Voice Limit [dB]'}
+						{'Volume Threshold [dB]'}
 					</Typography>
 					<Grid container spacing={2}>
 						<Grid item xs={3}>
 							<Checkbox
-								checked={settings.normalizeVoiceVolumesEnabled}
-								onChange={(_, checked: boolean) => setSettings('normalizeVoiceVolumesEnabled', checked)}
+								checked={settings.limitVoiceVolumesEnabled}
+								onChange={(_, checked: boolean) => setSettings('limitVoiceVolumesEnabled', checked)}
 							/>
 						</Grid>
 						<Grid
@@ -825,19 +819,32 @@ const Settings: React.FC<SettingsProps> = function ({ t, open, onClose }: Settin
 						>
 							<Slider
 								size="small"
-								disabled={!settings.normalizeVoiceVolumesEnabled}
-								value={settings.loudnessDbThreshold}
+								disabled={!settings.limitVoiceVolumesEnabled}
+								value={settings.loudnessThreshold}
 								valueLabelDisplay="auto"
+								marks={[
+									{ value: -60, label: 'Quiet' },
+									{ value: -30, label: 'Normal' },
+									{ value:   0, label: 'Loud' },
+								]}
 								min={-60}
 								max={0}
 								step={1}
-								onChange={(_, newValue: number | number[]) => setSettings('loudnessDbThreshold', newValue as number)}
+								onChange={(_, newValue: number | number[]) => setSettings('loudnessThreshold', newValue as number)}
 								aria-labelledby="input-slider"
 							/>
 						</Grid>
 					</Grid>
 				</div>
 				<Divider />
+				{/* TODO: Add localization */}
+				{/* <Typography variant="h6">
+					{'Custom Voice Tweaks'}
+				</Typography>
+				<div>
+
+				</div>
+				<Divider /> */}
 				<Typography variant="h6">{t('settings.keyboard.title')}</Typography>
 				<Grid container spacing={1}>
 					<Grid item xs={6}>

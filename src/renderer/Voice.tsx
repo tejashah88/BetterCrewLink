@@ -1247,7 +1247,7 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 					volumeLimiterWorklet.port.postMessage({
 						type: 'updateParameters',
 						...{
-							threshold: settings.loudnessDbThreshold
+							threshold: settings.loudnessThreshold
 						}
 					});
 
@@ -1444,20 +1444,20 @@ const Voice: React.FC<VoiceProps> = function ({ t, error: initialError }: VoiceP
 				handledPeerIds.push(peerId);
 
 				// NOTE: Not necessary to set settings on every update but cheaper than useEffect
-				if (settings.normalizeVoiceVolumesEnabled) {
+				if (settings.limitVoiceVolumesEnabled) {
 					audio.volumeLimiter.port.postMessage({
 						type: 'updateParameters',
 						...{
-							threshold: settings.loudnessDbThreshold
+							threshold: settings.loudnessThreshold
 						}
 					});
 				}
 
 				// Only apply volume thresholding accordingly if client settings don't match peer settings
-				if (settings.normalizeVoiceVolumesEnabled && !audio.volumeNormApplied) {
+				if (settings.limitVoiceVolumesEnabled && !audio.volumeNormApplied) {
 					audio.volumeNormApplied = true;
 					applyEffect(audio.gain, audio.volumeLimiter, audio.destination, player);
-				} else if (!settings.normalizeVoiceVolumesEnabled && audio.volumeNormApplied) {
+				} else if (!settings.limitVoiceVolumesEnabled && audio.volumeNormApplied) {
 					audio.volumeNormApplied = false;
 					restoreEffect(audio.gain, audio.volumeLimiter, audio.destination, player);
 				}
